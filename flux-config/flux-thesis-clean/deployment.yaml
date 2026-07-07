@@ -2,8 +2,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: meine-test-app
+  namespace: default
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
       app: web
@@ -14,9 +15,4 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: nginx:1.19
-
-# RunID: 639186187252686680
-
-
-
+        image: nginx:latest
