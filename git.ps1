@@ -7,4 +7,4 @@ git commit -m "Messung: $(Get-Date)"
 git push origin main
 
 # 3. Mess-Skript mit dem Start-Zeitpunkt starten
-.\messung.ps1 -start_push $start_push
+.\MessungTest2.ps1 -start_push $start_push
