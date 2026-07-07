@@ -1,66 +1,63 @@
-# ==============================================================================
-# GITOPS EINZEL-MESSUNG FÜR BACHELOR-THESIS (FLUX PULL-EVALUIERUNG)
-# ==============================================================================
+# flux2.ps1
+# Skript zur Messung von MTTD und MTTR mit Flux
 
-# --- KONFIGURATION ---
-$yamlFile = "./flux-setup/deployment.yaml"  # Path to your YAML
-$deploymentName = "meine-test-app"          # Deployment name
-$namespace = "default"
+# 1. Konfiguration
+$deployment_name = "meine-test-app"
+$app_namespace = "default"
+$kustomization_name = "flux-thesis-clean"
+$kustomization_namespace = "flux-thesis-clean"
 
-Clear-Host
-Write-Host "=== STARTE ISOLIERTEN EINZELDURCHGANG ===" -ForegroundColor Cyan
-
-# 1. Ist-Zustand auslesen
-$rawReplicas = kubectl get deployment/$deploymentName -n $namespace -o jsonpath='{.spec.replicas}' --request-timeout='5s' 2>$null
-if (-not $rawReplicas) { Write-Host "[FEHLER] Cluster nicht erreichbar oder App fehlt!" -ForegroundColor Red; exit }
-
-$currentClusterReplicas = [int]$rawReplicas
-$targetReplicas = if ($currentClusterReplicas -eq 2) { 3 } else { 2 }
-$uniqueId = (Get-Date).Ticks
-
-Write-Host "Cluster-Zustand: $currentClusterReplicas -> Ziel in Git: $targetReplicas" -ForegroundColor Gray
-
-# 2. YAML modifizieren
-$content = Get-Content $yamlFile -Raw
-$content = $content -replace 'replicas:\s*\d+', "replicas: $targetReplicas"
-if ($content -match '# RunID:.*') {
-    $content = $content -replace '# RunID:.*', "# RunID: $uniqueId"
-} else { $content += "`n# RunID: $uniqueId" }
-[System.IO.File]::WriteAllText((Resolve-Path $yamlFile), $content)
-
-# 3. GitHub Push & Timer Start
-Write-Host "Pushe Aenderung zu GitHub und starte Messung..." -ForegroundColor Yellow
-$T0_Obj = [DateTimeOffset]::UtcNow
-
-git add $yamlFile 2>&1 | Out-Null
-git commit -m "Manual Single-Test: Replicas to $targetReplicas (ID: $uniqueId)" 2>&1 | Out-Null
-git push origin main 2>&1 | Out-Null
-
-Write-Host "Push erfolgreich. Warte live auf Flux-Abgleich..." -ForegroundColor Green
-
-# 4. Warte-Schleife
-$reconciliationDone = $false
-while (-not $reconciliationDone) {
-    Start-Sleep -Seconds 1 # Scharfe 1-Sekunden-Taktung fuer maximale Praezision im Einzeltest
-    
-    $currentReplicasStr = kubectl get deployment/$deploymentName -n $namespace -o jsonpath='{.spec.replicas}' 2>$null
-    if ($currentReplicasStr) {
-        if ([int]$currentReplicasStr -eq $targetReplicas) {
-            $T_finish_Obj = [DateTimeOffset]::UtcNow
-            $reconciliationDone = $true
-        }
+# 2. Sync-Check: Warten, bis Flux bereit ist
+Write-Host "Prüfe Flux-Status..."
+$isReady = $false
+while (-not $isReady) {
+    $status = flux get kustomizations $kustomization_name -n $kustomization_namespace -o json | ConvertFrom-Json
+    # Prüfe die 'ready' condition im JSON
+    $readyCondition = $status.status.conditions | Where-Object { $_.type -eq "Ready" -and $_.status -eq "True" }
+    if ($readyCondition) {
+        $isReady = $true
+        Write-Host "Flux ist synchron und bereit."
+    } else {
+        Write-Host "Warte auf Synchronisation..."
+        Start-Sleep -Seconds 2
     }
 }
 
-# 5. Auswertung für Excel
-$currentTime_ms = ($T_finish_Obj - $T0_Obj).TotalMilliseconds
-$currentMTTD_s = ($currentTime_ms - 300) / 1000
-$currentMTTR_s = $currentTime_ms / 1000
+# 3. Startpunkt
+Write-Host "--- Bereit zur Messung ---"
+Write-Host "Führe jetzt deinen 'git push' aus."
+$start_push = Get-Date
 
-Write-Host "`n========================================" -ForegroundColor Green
-Write-Host "MESSUNG ERFOLGREICH BEENDET" -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Green
-Write-Host "Trage diese Werte in deine Excel-Liste ein:" -ForegroundColor White
-Write-Host "-> MTTD: $currentMTTD_s Sekunden" -ForegroundColor Yellow
-Write-Host "-> MTTR: $currentMTTR_s Sekunden" -ForegroundColor Yellow
-Write-Host "========================================" -ForegroundColor Green
+# 4. Alte Generation speichern
+$old_gen = kubectl get deployment $deployment_name -n $app_namespace -o jsonpath='{.metadata.generation}'
+
+# 5. Trigger für Flux (Reconciliation erzwingen)
+Write-Host "Triggering Reconciliation..."
+flux reconcile kustomization $kustomization_name -n $kustomization_namespace --with-source | Out-Null
+
+# 6. MTTD (Detektion)
+Write-Host "Warte auf Detektion..."
+while ($true) {
+    $new_gen = kubectl get deployment $deployment_name -n $app_namespace -o jsonpath='{.metadata.generation}'
+    if ($new_gen -ne $old_gen) {
+        $mttd_end = Get-Date
+        Write-Host "Änderung erkannt!"
+        break
+    }
+    Start-Sleep -Milliseconds 100
+}
+
+# 7. MTTR (Ready-Status)
+Write-Host "Warte auf Ready-Status (MTTR)..."
+kubectl rollout status deployment $deployment_name -n $app_namespace --timeout=300s | Out-Null
+$mttr_end = Get-Date
+
+# 8. Berechnung & Ausgabe
+$mttd = $mttd_end - $start_push
+$mttr = $mttr_end - $start_push
+
+Write-Host "`n----------------------------"
+Write-Host "ERGEBNISSE:"
+Write-Host "MTTD: $($mttd.TotalSeconds.ToString("F3")) Sekunden"
+Write-Host "MTTR: $($mttr.TotalSeconds.ToString("F3")) Sekunden"
+Write-Host "----------------------------"
