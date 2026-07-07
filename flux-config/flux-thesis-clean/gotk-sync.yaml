@@ -6,7 +6,7 @@ metadata:
   name: flux-thesis-clean
   namespace: flux-thesis-clean
 spec:
-  interval: 1m0s
+  interval: 10s
   ref:
     branch: main
   secretRef:
@@ -19,7 +19,7 @@ metadata:
   name: flux-thesis-clean
   namespace: flux-thesis-clean
 spec:
-  interval: 10m0s
+  interval: 10s
   path: ./flux-config
   prune: true
   sourceRef:

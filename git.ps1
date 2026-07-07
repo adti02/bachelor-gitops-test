@@ -1,3 +1,10 @@
-git add ./k8s/deployment.yaml
-git commit -m "Messung Testfall 2"
+# 1. Zeitstempel VOR dem Push nehmen
+$start_push = Get-Date
+
+# 2. Git Befehle
+git add .
+git commit -m "Messung: $(Get-Date)"
 git push origin main
+
+# 3. Mess-Skript mit dem Start-Zeitpunkt starten
+.\messung.ps1 -start_push $start_push
